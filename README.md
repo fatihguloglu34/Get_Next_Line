@@ -3,57 +3,69 @@
 # Get Next Line (GNL)
 
 ## Description
-**Get Next Line** is a fundamental C programming project in the 42 curriculum. The objective is to write a function that reads and returns a single line from a given file descriptor (fd) upon each call. 
+**Get Next Line** is a fundamental C programming project in the 42 curriculum. The objective is to write a function that reads and returns a single line from a given file descriptor (`fd`) upon each call. 
 
 Repeated calls to `get_next_line()` allow reading a text file or standard input line-by-line until reaching the end of the file (EOF). The function correctly preserves state across calls using a **static variable**, handles varying buffer sizes dynamically, and manages memory to prevent memory leaks.
 
-### Main Features
-- Reads from a file descriptor line-by-line.
-- Retains leftover unread content across function calls using a static variable.
-- Includes the newline (`\n`) character in the output line (unless EOF is reached without a newline).
-- Dynamic buffer sizes defined at compile time using `-D BUFFER_SIZE=n`.
-- **Bonus Feature:** Supports multiple active file descriptors simultaneously using a single static array without mixing data streams or losing state.
+### Features
+- **Line-by-line Reading:** Reads from a file descriptor line-by-line using a customizable buffer size (`-D BUFFER_SIZE=n`).
+- **State Preservation:** Retains unread remaining buffer content across function calls using static memory allocations.
+- **Proper Line Formatting:** Includes the newline (`\n`) character in the output line (unless EOF is reached without a trailing newline).
+- **Bonus Feature (Multiple FDs):** Manages multiple active file descriptors simultaneously using a single static pointer array (`OPEN_MAX`), allowing reading from `fd 3`, `fd 4`, `fd 5`, etc., in an interleaved order without losing state or mixing data streams.
+- **Bonus Feature (Single Static Variable):** Implements the full logic using only **one single static variable**.
 
 ---
 
 ## Instructions
 
 ### Compilation
-The project does not include a Makefile as required by the subject specifications. Instead, compile the source files directly with `cc` (or `gcc`) alongside the required flags and the custom `BUFFER_SIZE` macro.
+The subject specifies that no Makefile is required for Get Next Line. Compile the project files directly using `cc` along with the standard flags (`-Wall -Wextra -Werror`) and the required `-D BUFFER_SIZE` macro.
 
-**Mandatory Part Compilation:**
+**1. Mandatory Part Compilation:**
 ```bash
 cc -Wall -Wextra -Werror -D BUFFER_SIZE=42 main.c get_next_line.c get_next_line_utils.c -o gnl
 ```
 
-**Bonus Part Compilation:**
+**2. Bonus Part Compilation:**
 ```bash
 cc -Wall -Wextra -Werror -D BUFFER_SIZE=42 main.c get_next_line_bonus.c get_next_line_utils_bonus.c -o gnl_bonus
 ```
 
 ### Usage Example
-Create a simple `main.c` file to test the function:
+You can test both mandatory and bonus functionality using a simple `main.c`:
 
 ```c
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include "get_next_line.h"
+#include "get_next_line_bonus.h"
 
 int main(void)
 {
-    int   fd;
+    int   fd1;
+    int   fd2;
     char  *line;
 
-    fd = open("test.txt", O_RDONLY);
-    if (fd < 0)
+    fd1 = open("file1.txt", O_RDONLY);
+    fd2 = open("file2.txt", O_RDONLY);
+    if (fd1 < 0 || fd2 < 0)
         return (1);
-    while ((line = get_next_line(fd)) != NULL)
-    {
-        printf("%s", line);
-        free(line);
-    }
-    close(fd);
+
+    // Reading interleavedly from two different file descriptors (Bonus)
+    line = get_next_line(fd1);
+    printf("FD1 Line 1: %s", line);
+    free(line);
+
+    line = get_next_line(fd2);
+    printf("FD2 Line 1: %s", line);
+    free(line);
+
+    line = get_next_line(fd1);
+    printf("FD1 Line 2: %s", line);
+    free(line);
+
+    close(fd1);
+    close(fd2);
     return (0);
 }
 ```
@@ -62,25 +74,27 @@ int main(void)
 
 ## Algorithm Explanation & Justification
 
-The implementation relies on managing dynamic heap allocations while efficiently storing remaining data across successive calls using a **static string cache**.
+The core algorithm relies on incremental dynamic buffer management combined with static persistence across function executions.
 
-### Core Flow:
-1. **Reading into Buffer & Stacking:** 
-   The function continuously reads chunks of size `BUFFER_SIZE` into a local buffer using the `read()` system call. Each chunk is appended to the static leftover buffer (`left_str`) until a newline character (`\n`) is encountered or `read()` returns `0` (EOF).
-2. **Line Extraction:** 
-   Once a newline (`\n`) is found or EOF is reached, the function scans `left_str` up to the first `\n` (inclusive) and allocates memory for the line to be returned to the caller.
-3. **Buffer Cleanup / State Preservation:** 
-   The extracted portion is stripped from `left_str`, leaving only the unread remainder for subsequent calls. If `left_str` becomes empty or an error occurs, the memory is freed and set to `NULL`.
+### Core Execution Flow
+1. **Chunk Reading & Accumulation:**
+   The function calls `read()` to pull `BUFFER_SIZE` bytes at a time into a temporal buffer. This buffer is repeatedly appended to the static string variable (`left_str`) until a newline (`\n`) is encountered or `read()` returns `0` (EOF).
+2. **Line Extraction:**
+   Once a newline (`\n`) is identified or EOF is reached, the algorithm scans `left_str` up to the delimiter, allocates exact memory, and builds the line string to return to the caller.
+3. **Leftover Truncation:**
+   The extracted line is removed from `left_str`, leaving only the unread trailing characters stored for the next function invocation. Memory is freed and reset to `NULL` upon encountering errors or EOF.
 
-### Static Array Handling for Bonus (Multiple FDs):
-To support simultaneous reading from multiple file descriptors (e.g., interleaving calls between `fd 3`, `fd 4`, and `fd 5`), `left_str` is declared as a static array of pointers indexed by the file descriptor value:
+### Bonus Algorithm: Managing Multiple FDs with 1 Static Variable
+To fulfill the bonus requirement of handling multiple file descriptors simultaneously with a **single static variable**, `left_str` is declared as an array of char pointers indexed directly by the file descriptor value:
+
 ```c
 static char *left_str[OPEN_MAX];
 ```
-This design choice provides:
-- **O(1) Access:** Direct access to each descriptor's buffer via `left_str[fd]` without overhead.
-- **State Isolation:** Complete isolation of reading states across independent files/streams.
-- **Resource Management:** Individual allocations per `fd` ensuring clean memory deallocation upon reaching EOF or encountering errors.
+
+**Justification for this Approach:**
+- **O(1) Direct Mapping:** Utilizing `left_str[fd]` allows direct, constant-time indexing for each individual file stream without needing dynamic search structures.
+- **State Isolation:** Each file descriptor maintains its own independent reading buffer and EOF state, enabling interleaved calls between multiple files.
+- **Resource Efficiency:** Memory is allocated dynamically per `fd` only when actively read, and freed immediately when EOF or an error occurs.
 
 ---
 
@@ -88,12 +102,12 @@ This design choice provides:
 
 ### References & Documentation
 - **C Static Variables:** [GeeksforGeeks - Static Variables in C](https://www.geeksforgeeks.org/static-variables-in-c/)
-- **File Descriptors & `read()`:** `man 2 read`, `man 2 open`
-- **Linux System Calls:** [IBM Documentation on File I/O System Calls](https://www.ibm.com/docs/en/aix)
+- **File Descriptors & System Calls:** `man 2 read`, `man 2 open`
+- **Linux File Systems:** [IBM Developer Documentation on File I/O System Calls](https://www.ibm.com/docs/en/aix)
 
 ### AI Usage Statement
-AI tools (such as Claude / ChatGPT / Gemini) were utilized during the development of this project strictly in accordance with 42's AI Policy:
-- **Task Identification:** Formatting and organizing the structure of the `README.md` file to meet the subject requirements, and reviewing algorithm explanations for clarity.
-- **Exclusions:** No code was directly generated by AI for submission in `get_next_line.c` or helper logic. Logic design, memory leak prevention, and debugging were carried out manually to build true technical competence.
+In compliance with the 42 AI Guidelines:
+- **Tasks Performed with AI:** AI assistance was used exclusively for structuring, translating, and formatting the documentation (`README.md`) according to the updated project PDF standards, as well as refining technical prose.
+- **Exclusions:** No algorithm logic, C source code (`get_next_line.c`, `get_next_line_bonus.c`), or memory management code was generated by AI. All implementation details were designed and coded independently.
 
 This README was generated with the assistance of AI.
